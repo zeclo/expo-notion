@@ -1,24 +1,36 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Redirect</title>
-  </head>
-  <body>
-    <script>
-      var urlParams = new URLSearchParams(window.location.search);
-      var code = urlParams.get("code");
-      if (code == null){
-        window.location.replace(
-	        // ✅ここは適宜書き換える
-          "https://zeclo.github.io/expo-notion/fallback.html"
-        );
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Redirect Debug</title>
+</head>
+<body>
+  <div id="log">Loading...</div>
+
+  <script>
+    const log = (msg) => {
+      document.getElementById("log").innerText += "\n" + msg;
+      console.log(msg);
+    };
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get("code");
+
+    log("code = " + code);
+
+    // デバッグ用：2秒後にリダイレクト
+    setTimeout(() => {
+      if (code == null) {
+        log("→ fallback にリダイレクトします");
+        window.location.replace("https://zeclo.github.io/expo-notion/fallback.html");
       } else {
+        log("→ expo app にリダイレクトします");
         window.location.replace(
           "exp://gtxw8ua-zetta-san-8081.exp.direct/--/callback?code=" + code
         );
       }
-    </script>
-  </body>
+    }, 2000);
+  </script>
+</body>
 </html>
