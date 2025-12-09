@@ -22,8 +22,8 @@
                 <string>1.0.0</string>
                 <key>kind</key>
                 <string>software</string>
-                <key>社長アプリ</key>
-                <string>YourAppName</string>
+                <key>title</key>
+                <string>社長アプリ</string>
             </dict>
         </dict>
     </array>
