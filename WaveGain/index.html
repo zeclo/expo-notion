@@ -5,136 +5,145 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ffmpeg.wasm loudnorm bridge</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 12px; }
-    pre { white-space: pre-wrap; word-break: break-word; background:#111; color:#0f0; padding: 10px; border-radius: 8px; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      padding: 12px;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #111;
+      color: #0f0;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
   <h3>ffmpeg.wasm loudnorm bridge</h3>
-  <pre id="log">ready</pre>
+  <pre id="log">booting...</pre>
 
   <script type="module">
     import { FFmpeg } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
     import { toBlobURL } from "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js";
 
     const logEl = document.getElementById("log");
-    const log = (s) => {
-      console.log(s);
-      logEl.textContent = String(s);
+    const log = (msg) => {
+      console.log(msg);
+      logEl.textContent += "\n" + String(msg);
     };
 
     const ffmpeg = new FFmpeg();
     let loaded = false;
 
+    function postToExpo(payload) {
+      if (window.ReactNativeWebView?.postMessage) {
+        window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+      }
+    }
+
     async function ensureLoaded() {
       if (loaded) return;
+
       log("loading ffmpeg core...");
 
-      // core を blob URL 化（CORS回避の定番）
       const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm";
       const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript");
       const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm");
 
       await ffmpeg.load({ coreURL, wasmURL });
+
       loaded = true;
       log("ffmpeg loaded.");
+      postToExpo({ type: "READY" });
     }
 
     function base64ToUint8Array(b64) {
       const binary = atob(b64);
       const len = binary.length;
       const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
       return bytes;
     }
 
     function uint8ArrayToBase64(bytes) {
       let binary = "";
-      const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
       }
       return btoa(binary);
     }
 
-    // Expo(WebView) からの受信
-    async function handleMessage(data) {
-      // 期待形式:
-      // { type:"PROCESS", id:"...", inputBase64:"...", inputName:"sample.wav", outName:"normalized.wav", i:-16, tp:-1.5, lra:11 }
-      if (!data || data.type !== "PROCESS") return;
-
+    async function processAudio(data) {
       const id = data.id ?? String(Date.now());
-      const inputName = data.inputName ?? "input.wav";
-      const outName = data.outName ?? "output.wav";
+      const inputName = "input.wav";
+      const outputName = "output.wav";
 
-      const I = (typeof data.i === "number") ? data.i : -16;     // Integrated LUFS
-      const TP = (typeof data.tp === "number") ? data.tp : -1.5; // True Peak
-      const LRA = (typeof data.lra === "number") ? data.lra : 11; // Loudness Range
+      const I = typeof data.i === "number" ? data.i : -16;
+      const TP = typeof data.tp === "number" ? data.tp : -1.5;
+      const LRA = typeof data.lra === "number" ? data.lra : 11;
 
       try {
         await ensureLoaded();
-        log(`processing... id=${id}`);
+        log(`processing start id=${id}`);
 
-        // FSへ書き込み（ファイル名は固定でもOK。動的でもOK。どっちでも動きます）
         const inputBytes = base64ToUint8Array(data.inputBase64);
         await ffmpeg.writeFile(inputName, inputBytes);
 
-        // loudnorm（2passの厳密版もあるが、まずは1passで十分実用）
-        // wavのまま返す（必要なら mp3 などにもできる）
         const filter = `loudnorm=I=${I}:TP=${TP}:LRA=${LRA}`;
         await ffmpeg.exec([
           "-i", inputName,
           "-af", filter,
           "-ar", "44100",
           "-ac", "2",
-          outName
+          outputName
         ]);
 
-        const outBytes = await ffmpeg.readFile(outName);
+        const outBytes = await ffmpeg.readFile(outputName);
         const outBase64 = uint8ArrayToBase64(outBytes);
 
-        // 掃除（次回の衝突回避）
         try { await ffmpeg.deleteFile(inputName); } catch {}
-        try { await ffmpeg.deleteFile(outName); } catch {}
+        try { await ffmpeg.deleteFile(outputName); } catch {}
 
-        log(`done id=${id} size=${outBytes.length}`);
+        log(`processing done id=${id}`);
 
-        const payload = {
+        postToExpo({
           type: "RESULT",
           id,
-          outName,
           outBase64,
           mime: "audio/wav"
-        };
+        });
 
-        // WebView(ReactNative)へ返す
-        if (window.ReactNativeWebView?.postMessage) {
-          window.ReactNativeWebView.postMessage(JSON.stringify(payload));
-        } else {
-          // ブラウザ単体動作確認用
-          log("ReactNativeWebView not found (open from browser).");
-          console.log(payload);
-        }
-      } catch (e) {
-        console.error(e);
-        const payload = { type: "ERROR", id, message: String(e?.message ?? e) };
-        if (window.ReactNativeWebView?.postMessage) {
-          window.ReactNativeWebView.postMessage(JSON.stringify(payload));
-        }
-        log(`error id=${id}: ${payload.message}`);
+      } catch (err) {
+        log("error: " + err);
+        postToExpo({
+          type: "ERROR",
+          id,
+          message: String(err?.message ?? err)
+        });
       }
     }
 
-    // RN WebView からは document の message イベントで来ることが多い
-    window.addEventListener("message", (ev) => {
-      try { handleMessage(JSON.parse(ev.data)); } catch {}
-    });
-    // 念のため（環境差吸収）
-    document.addEventListener("message", (ev) => {
-      try { handleMessage(JSON.parse(ev.data)); } catch {}
+    // ★ Expo WebView からの受信はこれだけ
+    document.addEventListener("message", (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data?.type === "PROCESS") {
+          log("PROCESS received");
+          processAudio(data);
+        }
+      } catch (e) {
+        log("invalid message");
+      }
     });
 
-    log("ready (waiting for PROCESS message)");
+    // 起動通知
+    ensureLoaded();
+    log("waiting for PROCESS message...");
   </script>
 </body>
 </html>
