@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ffmpeg.wasm loudnorm bridge</title>
+</head>
+<body>
+<script type="module">
+  import { createFFmpeg, fetchFile } from "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.min.js";
+
+  const ffmpeg = createFFmpeg({
+    log: true,
+    // GitHub Pages でコアファイルのパスを合わせたい場合は corePath を指定
+    // corePath: "https://unpkg.com/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js",
+  });
+
+  function postToRN(obj) {
+    // Expo WebView（react-native-webview）宛
+    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+      window.ReactNativeWebView.postMessage(JSON.stringify(obj));
+    } else {
+      // ブラウザ確認用
+      console.log("postToRN:", obj);
+    }
+  }
+
+  async function ensureLoaded() {
+    if (!ffmpeg.isLoaded()) {
+      await ffmpeg.load();
+    }
+  }
+
+  function base64ToUint8Array(base64) {
+    const bin = atob(base64);
+    const len = bin.length;
+    const buf = new Uint8Array(len);
+    for (let i = 0; i < len; i++) buf[i] = bin.charCodeAt(i);
+    return buf;
+  }
+
+  function uint8ArrayToBase64(u8) {
+    let s = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < u8.length; i += chunk) {
+      s += String.fromCharCode(...u8.subarray(i, i + chunk));
+    }
+    return btoa(s);
+  }
+
+  async function processLoudnorm(inputBase64) {
+    await ensureLoaded();
+
+    // 動的ファイル名でも問題ないように、仮想FS上では固定名で扱う
+    const inName = "input.wav";
+    const outName = "output.wav";
+
+    // 既存があれば掃除（失敗しても無視）
+    try { ffmpeg.FS("unlink", inName); } catch {}
+    try { ffmpeg.FS("unlink", outName); } catch {}
+
+    const inBytes = base64ToUint8Array(inputBase64);
+    ffmpeg.FS("writeFile", inName, inBytes);
+
+    // loudnorm: 目標例
+    // I=-16 LUFS / TP=-1.5dB / LRA=11 くらいが “会話〜一般用途” で無難
+    // ※もし音が割れる/弱いなら値を調整
+    await ffmpeg.run(
+      "-i", inName,
+      "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+      "-ar", "44100",
+      outName
+    );
+
+    const outBytes = ffmpeg.FS("readFile", outName);
+    return uint8ArrayToBase64(outBytes);
+  }
+
+  // RN WebView からのメッセージ受信
+  window.addEventListener("message", async (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+
+      if (msg.type === "PING") {
+        postToRN({ type: "PONG" });
+        return;
+      }
+
+      if (msg.type === "PROCESS") {
+        const base64 = msg.base64;
+        if (!base64) throw new Error("base64 が空です");
+
+        const outBase64 = await processLoudnorm(base64);
+        postToRN({ type: "RESULT", base64: outBase64, mime: "audio/wav" });
+      }
+    } catch (e) {
+      postToRN({ type: "ERROR", message: e?.message ?? String(e) });
+    }
+  });
+
+  // RN側へ準備完了通知
+  (async () => {
+    try {
+      await ensureLoaded();
+      postToRN({ type: "READY" });
+    } catch (e) {
+      postToRN({ type: "ERROR", message: "ffmpeg load failed: " + (e?.message ?? String(e)) });
+    }
+  })();
+</script>
+</body>
+</html>
