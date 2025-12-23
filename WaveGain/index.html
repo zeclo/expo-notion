@@ -3,147 +3,51 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ffmpeg.wasm loudnorm bridge</title>
-  <style>
-    body {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      padding: 12px;
-    }
-    pre {
-      white-space: pre-wrap;
-      word-break: break-word;
-      background: #111;
-      color: #0f0;
-      padding: 10px;
-      border-radius: 8px;
-      font-size: 12px;
-    }
-  </style>
+  <title>ffmpeg.wasm bridge</title>
 </head>
 <body>
-  <h3>ffmpeg.wasm loudnorm bridge</h3>
-  <pre id="log">booting...</pre>
+<pre id="log">boot</pre>
 
-  <script type="module">
-    import { FFmpeg } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
-    import { toBlobURL } from "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js";
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/ffmpeg.min.js"></script>
 
-    const logEl = document.getElementById("log");
-    const log = (msg) => {
-      console.log(msg);
-      logEl.textContent += "\n" + String(msg);
-    };
+<script>
+  const log = (m) => {
+    document.getElementById("log").textContent += "\n" + m;
+  };
 
-    const ffmpeg = new FFmpeg();
-    let loaded = false;
+  const { createFFmpeg } = FFmpeg;
+  const ffmpeg = createFFmpeg({ log: true });
 
-    function postToExpo(payload) {
-      if (window.ReactNativeWebView?.postMessage) {
-        window.ReactNativeWebView.postMessage(JSON.stringify(payload));
-      }
+  async function loadFFmpeg() {
+    log("loading...");
+    await ffmpeg.load();
+    log("loaded");
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(
+        JSON.stringify({ type: "READY" })
+      );
     }
+  }
 
-    async function ensureLoaded() {
-      if (loaded) return;
+  document.addEventListener("message", async (e) => {
+    log("message received");
+    const data = JSON.parse(e.data);
+    if (data.type !== "PROCESS") return;
 
-      log("loading ffmpeg core...");
+    const bytes = Uint8Array.from(atob(data.inputBase64), c => c.charCodeAt(0));
+    ffmpeg.FS("writeFile", "in.wav", bytes);
 
-      const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm";
-      const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript");
-      const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm");
+    await ffmpeg.run("-i", "in.wav", "-af", "loudnorm", "out.wav");
 
-      await ffmpeg.load({ coreURL, wasmURL });
+    const out = ffmpeg.FS("readFile", "out.wav");
+    const base64 = btoa(String.fromCharCode(...out));
 
-      loaded = true;
-      log("ffmpeg loaded.");
-      postToExpo({ type: "READY" });
-    }
+    window.ReactNativeWebView.postMessage(
+      JSON.stringify({ type: "RESULT", outBase64: base64 })
+    );
+  });
 
-    function base64ToUint8Array(b64) {
-      const binary = atob(b64);
-      const len = binary.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      return bytes;
-    }
-
-    function uint8ArrayToBase64(bytes) {
-      let binary = "";
-      const chunkSize = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-      }
-      return btoa(binary);
-    }
-
-    async function processAudio(data) {
-      const id = data.id ?? String(Date.now());
-      const inputName = "input.wav";
-      const outputName = "output.wav";
-
-      const I = typeof data.i === "number" ? data.i : -16;
-      const TP = typeof data.tp === "number" ? data.tp : -1.5;
-      const LRA = typeof data.lra === "number" ? data.lra : 11;
-
-      try {
-        await ensureLoaded();
-        log(`processing start id=${id}`);
-
-        const inputBytes = base64ToUint8Array(data.inputBase64);
-        await ffmpeg.writeFile(inputName, inputBytes);
-
-        const filter = `loudnorm=I=${I}:TP=${TP}:LRA=${LRA}`;
-        await ffmpeg.exec([
-          "-i", inputName,
-          "-af", filter,
-          "-ar", "44100",
-          "-ac", "2",
-          outputName
-        ]);
-
-        const outBytes = await ffmpeg.readFile(outputName);
-        const outBase64 = uint8ArrayToBase64(outBytes);
-
-        try { await ffmpeg.deleteFile(inputName); } catch {}
-        try { await ffmpeg.deleteFile(outputName); } catch {}
-
-        log(`processing done id=${id}`);
-
-        postToExpo({
-          type: "RESULT",
-          id,
-          outBase64,
-          mime: "audio/wav"
-        });
-
-      } catch (err) {
-        log("error: " + err);
-        postToExpo({
-          type: "ERROR",
-          id,
-          message: String(err?.message ?? err)
-        });
-      }
-    }
-
-    // ★ Expo WebView からの受信はこれだけ
-    document.addEventListener("message", (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data?.type === "PROCESS") {
-          log("PROCESS received");
-          processAudio(data);
-        }
-      } catch (e) {
-        log("invalid message");
-      }
-    });
-
-    // 起動通知
-    ensureLoaded();
-    log("waiting for PROCESS message...");
-  </script>
+  loadFFmpeg();
+</script>
 </body>
 </html>
