@@ -1,53 +1,18 @@
 <!doctype html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ffmpeg.wasm bridge</title>
-</head>
+<html>
 <body>
-<pre id="log">boot</pre>
-
-<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/ffmpeg.min.js"></script>
+<h1 id="t">JS NOT RUN</h1>
 
 <script>
-  const log = (m) => {
-    document.getElementById("log").textContent += "\n" + m;
-  };
+  document.getElementById("t").innerText = "JS RUNNING";
 
-  const { createFFmpeg } = FFmpeg;
-  const ffmpeg = createFFmpeg({ log: true });
-
-  async function loadFFmpeg() {
-    log("loading...");
-    await ffmpeg.load();
-    log("loaded");
-    if (window.ReactNativeWebView) {
-      window.ReactNativeWebView.postMessage(
-        JSON.stringify({ type: "READY" })
-      );
-    }
+  if (window.ReactNativeWebView) {
+    window.ReactNativeWebView.postMessage("HELLO_FROM_PAGES");
   }
 
-  document.addEventListener("message", async (e) => {
-    log("message received");
-    const data = JSON.parse(e.data);
-    if (data.type !== "PROCESS") return;
-
-    const bytes = Uint8Array.from(atob(data.inputBase64), c => c.charCodeAt(0));
-    ffmpeg.FS("writeFile", "in.wav", bytes);
-
-    await ffmpeg.run("-i", "in.wav", "-af", "loudnorm", "out.wav");
-
-    const out = ffmpeg.FS("readFile", "out.wav");
-    const base64 = btoa(String.fromCharCode(...out));
-
-    window.ReactNativeWebView.postMessage(
-      JSON.stringify({ type: "RESULT", outBase64: base64 })
-    );
+  document.addEventListener("message", (e) => {
+    document.getElementById("t").innerText = "RECEIVED: " + e.data;
   });
-
-  loadFFmpeg();
 </script>
 </body>
 </html>
