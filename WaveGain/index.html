@@ -1,18 +1,28 @@
 <!doctype html>
 <html>
 <body>
-<h1 id="t">JS NOT RUN</h1>
+<h1 id="t">JS RUNNING</h1>
 
 <script>
-  document.getElementById("t").innerText = "JS RUNNING";
+  let ready = false;
 
-  if (window.ReactNativeWebView) {
-    window.ReactNativeWebView.postMessage("HELLO_FROM_PAGES");
+  function send(msg) {
+    if (window.ReactNativeWebView?.postMessage) {
+      window.ReactNativeWebView.postMessage(msg);
+    }
   }
 
+  // Expo → Pages を待つ
   document.addEventListener("message", (e) => {
-    document.getElementById("t").innerText = "RECEIVED: " + e.data;
+    document.getElementById("t").innerText = "RECEIVED FROM EXPO: " + e.data;
+    send("HELLO_FROM_PAGES");
+    ready = true;
   });
+
+  // 念のため 1 秒後にも送る（保険）
+  setTimeout(() => {
+    send("PAGES_ALIVE");
+  }, 1000);
 </script>
 </body>
 </html>
