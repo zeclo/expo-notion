@@ -2,12 +2,13 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>FFmpeg.wasm loudnorm</title>
+  <title>FFmpeg.wasm loudnorm bridge</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>
 <body>
   <h2 id="status">JS RUNNING3</h2>
 
+  <!-- ffmpeg.wasm (UMD) -->
   <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/ffmpeg.min.js"></script>
 
   <script>
@@ -15,29 +16,49 @@
     const { createFFmpeg } = FFmpeg;
 
     const ffmpeg = createFFmpeg({ log: true });
-    let loaded = false;
+    let ffmpegLoaded = false;
+
+    /* =========================
+       共通ユーティリティ
+    ========================= */
 
     function send(obj) {
-      if (window.ReactNativeWebView?.postMessage) {
+      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
         window.ReactNativeWebView.postMessage(JSON.stringify(obj));
       }
     }
 
     function base64ToUint8(b64) {
-      return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes;
     }
 
     function uint8ToBase64(bytes) {
-      return btoa(String.fromCharCode(...bytes));
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
+      return btoa(binary);
     }
 
-    async function loadFFmpeg() {
-      statusEl.innerText = 'Loading FFmpeg...';
-      await ffmpeg.load();
-      loaded = true;
-      statusEl.innerText = 'FFmpeg READY';
+    /* =========================
+       READY を「必ず」送る
+    ========================= */
+
+    // ★ DOM & WebView が確実に準備できた後
+    window.addEventListener('load', () => {
+      statusEl.innerText = 'JS RUNNING3 (READY SENT)';
       send({ type: 'READY' });
-    }
+    });
+
+    /* =========================
+       メッセージ受信
+    ========================= */
 
     document.addEventListener('message', async (event) => {
       let data;
@@ -47,15 +68,19 @@
         return;
       }
 
+      // Expo 起動確認
       if (data.type === 'PING') {
         send({ type: 'READY' });
         return;
       }
 
+      // 音声処理要求
       if (data.type === 'PROCESS') {
         try {
-          if (!loaded) {
-            await loadFFmpeg();
+          if (!ffmpegLoaded) {
+            statusEl.innerText = 'Loading FFmpeg...';
+            await ffmpeg.load();
+            ffmpegLoaded = true;
           }
 
           statusEl.innerText = 'Processing audio...';
@@ -74,8 +99,8 @@
             'output.wav'
           );
 
-          const out = ffmpeg.FS('readFile', 'output.wav');
-          const outBase64 = uint8ToBase64(out);
+          const outBytes = ffmpeg.FS('readFile', 'output.wav');
+          const outBase64 = uint8ToBase64(outBytes);
 
           statusEl.innerText = 'Done';
 
@@ -85,13 +110,14 @@
             mime: 'audio/wav',
           });
         } catch (e) {
-          send({ type: 'ERROR', message: String(e) });
+          statusEl.innerText = 'ERROR';
+          send({
+            type: 'ERROR',
+            message: String(e),
+          });
         }
       }
     });
-
-    // 起動通知
-    send({ type: 'ALIVE' });
   </script>
 </body>
 </html>
