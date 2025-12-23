@@ -9,26 +9,24 @@
   <h2 id="status">JS RUNNING2</h2>
 
   <script>
-    const statusEl = document.getElementById('status');
-
-    function send(msg) {
-      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
-        window.ReactNativeWebView.postMessage(msg);
-      }
+  function send(obj) {
+    if (window.ReactNativeWebView?.postMessage) {
+      window.ReactNativeWebView.postMessage(JSON.stringify(obj));
     }
+  }
 
-    // Expo → Pages を受信
-    document.addEventListener('message', (event) => {
-      statusEl.textContent = 'RECEIVED FROM EXPO: ' + event.data;
+  document.addEventListener('message', (event) => {
+    document.getElementById('status').innerText =
+      'RECEIVED FROM EXPO: ' + event.data;
 
-      // 👇 これが今まで無かった「返事」
-      send('HELLO_FROM_PAGES');
-    });
+    // 👇 JSONで返す
+    send({ type: 'READY' });
+  });
 
-    // 保険：1秒後にも送信
-    setTimeout(() => {
-      send('PAGES_ALIVE');
-    }, 1000);
-  </script>
+  // 保険
+  setTimeout(() => {
+    send({ type: 'ALIVE' });
+  }, 1000);
+</script>
 </body>
 </html>
