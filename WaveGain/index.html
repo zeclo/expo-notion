@@ -2,31 +2,82 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>WebView Handshake Test</title>
+  <title>FFmpeg.wasm loudnorm</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>
 <body>
   <h2 id="status">JS RUNNING2</h2>
 
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/ffmpeg.min.js"></script>
+
   <script>
-  function send(obj) {
-    if (window.ReactNativeWebView?.postMessage) {
-      window.ReactNativeWebView.postMessage(JSON.stringify(obj));
+    const statusEl = document.getElementById('status');
+    const { createFFmpeg } = FFmpeg;
+
+    const ffmpeg = createFFmpeg({ log: true });
+    let loaded = false;
+
+    function send(obj) {
+      if (window.ReactNativeWebView?.postMessage) {
+        window.ReactNativeWebView.postMessage(JSON.stringify(obj));
+      }
     }
-  }
 
-  document.addEventListener('message', (event) => {
-    document.getElementById('status').innerText =
-      'RECEIVED FROM EXPO: ' + event.data;
+    async function loadFFmpeg() {
+      statusEl.innerText = 'Loading FFmpeg...';
+      await ffmpeg.load();
+      loaded = true;
+      statusEl.innerText = 'FFmpeg READY';
+      send({ type: 'READY' });
+    }
 
-    // 👇 JSONで返す
-    send({ type: 'READY' });
-  });
+    function base64ToUint8(b64) {
+      return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    }
 
-  // 保険
-  setTimeout(() => {
+    function uint8ToBase64(bytes) {
+      return btoa(String.fromCharCode(...bytes));
+    }
+
+    document.addEventListener('message', async (event) => {
+      const data = JSON.parse(event.data);
+
+      if (data.type === 'PROCESS') {
+        try {
+          if (!loaded) {
+            await loadFFmpeg();
+          }
+
+          statusEl.innerText = 'Processing audio...';
+
+          ffmpeg.FS('writeFile', 'input.wav', base64ToUint8(data.inputBase64));
+
+          await ffmpeg.run(
+            '-i', 'input.wav',
+            '-af', 'loudnorm',
+            'output.wav'
+          );
+
+          const out = ffmpeg.FS('readFile', 'output.wav');
+          const outBase64 = uint8ToBase64(out);
+
+          statusEl.innerText = 'Done';
+
+          send({
+            type: 'RESULT',
+            outBase64,
+            mime: 'audio/wav',
+          });
+
+        } catch (e) {
+          statusEl.innerText = 'ERROR';
+          send({ type: 'ERROR', message: String(e) });
+        }
+      }
+    });
+
+    // 初期通知
     send({ type: 'ALIVE' });
-  }, 1000);
-</script>
+  </script>
 </body>
 </html>
