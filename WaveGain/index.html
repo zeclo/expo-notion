@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>
 <body>
-  <h2 id="status">JS RUNNING2</h2>
+  <h2 id="status">JS RUNNING3</h2>
 
   <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/ffmpeg.min.js"></script>
 
@@ -23,14 +23,6 @@
       }
     }
 
-    async function loadFFmpeg() {
-      statusEl.innerText = 'Loading FFmpeg...';
-      await ffmpeg.load();
-      loaded = true;
-      statusEl.innerText = 'FFmpeg READY';
-      send({ type: 'READY' });
-    }
-
     function base64ToUint8(b64) {
       return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
     }
@@ -39,8 +31,26 @@
       return btoa(String.fromCharCode(...bytes));
     }
 
+    async function loadFFmpeg() {
+      statusEl.innerText = 'Loading FFmpeg...';
+      await ffmpeg.load();
+      loaded = true;
+      statusEl.innerText = 'FFmpeg READY';
+      send({ type: 'READY' });
+    }
+
     document.addEventListener('message', async (event) => {
-      const data = JSON.parse(event.data);
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+
+      if (data.type === 'PING') {
+        send({ type: 'READY' });
+        return;
+      }
 
       if (data.type === 'PROCESS') {
         try {
@@ -50,11 +60,17 @@
 
           statusEl.innerText = 'Processing audio...';
 
-          ffmpeg.FS('writeFile', 'input.wav', base64ToUint8(data.inputBase64));
+          ffmpeg.FS(
+            'writeFile',
+            'input.wav',
+            base64ToUint8(data.inputBase64)
+          );
 
           await ffmpeg.run(
-            '-i', 'input.wav',
-            '-af', 'loudnorm',
+            '-i',
+            'input.wav',
+            '-af',
+            'loudnorm',
             'output.wav'
           );
 
@@ -68,15 +84,13 @@
             outBase64,
             mime: 'audio/wav',
           });
-
         } catch (e) {
-          statusEl.innerText = 'ERROR';
           send({ type: 'ERROR', message: String(e) });
         }
       }
     });
 
-    // 初期通知
+    // 起動通知
     send({ type: 'ALIVE' });
   </script>
 </body>
