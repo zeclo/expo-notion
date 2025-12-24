@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ffmpeg.wasm loudnorm bridge</title>
   <style>
-    body { font-family: sans-serif; padding: 10px }
-    #status { font-size: 14px; color: #222 }
+    body { font-family: system-ui, sans-serif; padding: 10px; }
+    #status { font-size: 14px; color: #222; }
     #log { font-size: 12px; margin-top: 6px; white-space: pre-wrap; }
   </style>
 </head>
@@ -15,109 +15,102 @@
   <div id="status">initializing...</div>
   <div id="log"></div>
 
-  <script>
-    // =========== Helpers ===========
-    const logEl = document.getElementById("log");
+  <script type="module">
+    import { FFmpeg } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
+    import { toBlobURL } from "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js";
+
     const statusEl = document.getElementById("status");
-    function log(msg) {
-      logEl.textContent += msg + "\n";
-      console.log(msg);
-    }
-    function setStatus(msg) {
-      statusEl.textContent = msg;
-      console.log(msg);
-    }
+    const logEl = document.getElementById("log");
 
-    // =========== ffmpeg.wasm Setup ===========
-    let ffmpeg = null;
-    let ready = false;
+    const setStatus = (s) => {
+      statusEl.textContent = s;
+      console.log(s);
+    };
+    const log = (s) => {
+      logEl.textContent += s + "\n";
+      console.log(s);
+    };
 
-    async function loadFFMPEG() {
+    const ffmpeg = new FFmpeg();
+    let loaded = false;
+
+    async function loadFFmpeg() {
       setStatus("loading ffmpeg...");
-
-      const script1 = document.createElement("script");
-      script1.src = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/ffmpeg.min.js";
-      document.body.appendChild(script1);
-
-      script1.onload = async () => {
-        ffmpeg = FFmpeg.createFFmpeg({ log: false });
-        await ffmpeg.load();
-        ready = true;
-        setStatus("ffmpeg ready");
-      };
+      const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm";
+      const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript");
+      const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm");
+      await ffmpeg.load({ coreURL, wasmURL });
+      loaded = true;
+      setStatus("waiting for PROCESS");
     }
 
-    loadFFMPEG();
+    loadFFmpeg();
 
-    // =========== Base64 Helpers ===========
     function base64ToUint8Array(b64) {
       const binary = atob(b64);
-      const u8 = new Uint8Array(binary.length);
+      const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) {
-        u8[i] = binary.charCodeAt(i);
+        bytes[i] = binary.charCodeAt(i);
       }
-      return u8;
+      return bytes;
     }
-    function uint8ArrayToBase64(u8) {
+
+    function uint8ArrayToBase64(bytes) {
       let binary = "";
       const chunk = 0x8000;
-      for (let i = 0; i < u8.length; i += chunk) {
-        binary += String.fromCharCode(...u8.subarray(i, i + chunk));
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
       }
       return btoa(binary);
     }
 
-    // =========== WebView Message Handler ===========
-    window.addEventListener("message", async (ev) => {
-      let data = null;
-      try { data = JSON.parse(ev.data); } catch {}
-      if (!data || data.type !== "PROCESS") return;
-
-      if (!ready) {
-        log("❌ ffmpeg not loaded yet");
+    async function handleProcess(data) {
+      if (!loaded) {
+        log("ffmpeg not ready");
         return;
       }
 
       const { id, inputBase64, inputName, outName, i, tp, lra } = data;
-      setStatus(`processing ${id}...`);
+      setStatus(`processing ${id}`);
 
-      // write to virtual FS
       const inputBytes = base64ToUint8Array(inputBase64);
-      await ffmpeg.FS("writeFile", inputName, inputBytes);
+      await ffmpeg.writeFile(inputName, inputBytes);
 
-      // ffmpeg loudnorm
       const filter = `loudnorm=I=${i}:TP=${tp}:LRA=${lra}`;
-      await ffmpeg.run(
+      await ffmpeg.exec([
         "-i", inputName,
         "-af", filter,
         "-ar", "44100",
         "-ac", "2",
         outName
-      );
+      ]);
 
-      const outBytes = ffmpeg.FS("readFile", outName);
-      const outB64 = uint8ArrayToBase64(outBytes);
+      const outBytes = await ffmpeg.readFile(outName);
+      const outBase64 = uint8ArrayToBase64(outBytes);
 
-      // cleanup
-      try { ffmpeg.FS("unlink", inputName); } catch {}
-      try { ffmpeg.FS("unlink", outName); } catch {}
+      try { await ffmpeg.deleteFile(inputName); } catch {}
+      try { await ffmpeg.deleteFile(outName); } catch {}
 
       const payload = {
         type: "RESULT",
         id,
         mime: "audio/wav",
-        outBase64: outB64,
+        outBase64,
         outName
       };
 
-      // send back to Expo WebView
-      window.parent.postMessage(JSON.stringify(payload), "*");
+      window.ReactNativeWebView.postMessage(JSON.stringify(payload));
       setStatus(`done ${id}`);
-      log(`✔ processed size=${outBytes.length}`);
+      log(`processed ${outBytes.length} bytes`);
+    }
+
+    window.addEventListener("message", (ev) => {
+      let data;
+      try { data = JSON.parse(ev.data); } catch { return; }
+      if (data?.type === "PROCESS") {
+        handleProcess(data);
+      }
     });
-
-    setStatus("waiting for PROCESS");
   </script>
-
 </body>
 </html>
