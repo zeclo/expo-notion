@@ -2,122 +2,122 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>FFmpeg.wasm loudnorm bridge</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ffmpeg.wasm loudnorm bridge</title>
+  <style>
+    body { font-family: sans-serif; padding: 10px }
+    #status { font-size: 14px; color: #222 }
+    #log { font-size: 12px; margin-top: 6px; white-space: pre-wrap; }
+  </style>
 </head>
-<body>
-  <h2 id="status">JS RUNNING3</h2>
 
-  <!-- ffmpeg.wasm (UMD) -->
-  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/ffmpeg.min.js"></script>
+<body>
+  <div id="status">initializing...</div>
+  <div id="log"></div>
 
   <script>
-    const statusEl = document.getElementById('status');
-    const { createFFmpeg } = FFmpeg;
-
-    const ffmpeg = createFFmpeg({ log: true });
-    let ffmpegLoaded = false;
-
-    /* =========================
-       共通ユーティリティ
-    ========================= */
-
-    function send(obj) {
-      if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
-        window.ReactNativeWebView.postMessage(JSON.stringify(obj));
-      }
+    // =========== Helpers ===========
+    const logEl = document.getElementById("log");
+    const statusEl = document.getElementById("status");
+    function log(msg) {
+      logEl.textContent += msg + "\n";
+      console.log(msg);
+    }
+    function setStatus(msg) {
+      statusEl.textContent = msg;
+      console.log(msg);
     }
 
-    function base64ToUint8(b64) {
+    // =========== ffmpeg.wasm Setup ===========
+    let ffmpeg = null;
+    let ready = false;
+
+    async function loadFFMPEG() {
+      setStatus("loading ffmpeg...");
+
+      const script1 = document.createElement("script");
+      script1.src = "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/ffmpeg.min.js";
+      document.body.appendChild(script1);
+
+      script1.onload = async () => {
+        ffmpeg = FFmpeg.createFFmpeg({ log: false });
+        await ffmpeg.load();
+        ready = true;
+        setStatus("ffmpeg ready");
+      };
+    }
+
+    loadFFMPEG();
+
+    // =========== Base64 Helpers ===========
+    function base64ToUint8Array(b64) {
       const binary = atob(b64);
-      const bytes = new Uint8Array(binary.length);
+      const u8 = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
+        u8[i] = binary.charCodeAt(i);
       }
-      return bytes;
+      return u8;
     }
-
-    function uint8ToBase64(bytes) {
-      let binary = '';
+    function uint8ArrayToBase64(u8) {
+      let binary = "";
       const chunk = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunk) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      for (let i = 0; i < u8.length; i += chunk) {
+        binary += String.fromCharCode(...u8.subarray(i, i + chunk));
       }
       return btoa(binary);
     }
 
-    /* =========================
-       READY を「必ず」送る
-    ========================= */
+    // =========== WebView Message Handler ===========
+    window.addEventListener("message", async (ev) => {
+      let data = null;
+      try { data = JSON.parse(ev.data); } catch {}
+      if (!data || data.type !== "PROCESS") return;
 
-    // ★ DOM & WebView が確実に準備できた後
-    window.addEventListener('load', () => {
-      statusEl.innerText = 'JS RUNNING3 (READY SENT)';
-      send({ type: 'READY' });
-    });
-
-    /* =========================
-       メッセージ受信
-    ========================= */
-
-    document.addEventListener('message', async (event) => {
-      let data;
-      try {
-        data = JSON.parse(event.data);
-      } catch {
+      if (!ready) {
+        log("❌ ffmpeg not loaded yet");
         return;
       }
 
-      // Expo 起動確認
-      if (data.type === 'PING') {
-        send({ type: 'READY' });
-        return;
-      }
+      const { id, inputBase64, inputName, outName, i, tp, lra } = data;
+      setStatus(`processing ${id}...`);
 
-      // 音声処理要求
-      if (data.type === 'PROCESS') {
-        try {
-          if (!ffmpegLoaded) {
-            statusEl.innerText = 'Loading FFmpeg...';
-            await ffmpeg.load();
-            ffmpegLoaded = true;
-          }
+      // write to virtual FS
+      const inputBytes = base64ToUint8Array(inputBase64);
+      await ffmpeg.FS("writeFile", inputName, inputBytes);
 
-          statusEl.innerText = 'Processing audio...';
+      // ffmpeg loudnorm
+      const filter = `loudnorm=I=${i}:TP=${tp}:LRA=${lra}`;
+      await ffmpeg.run(
+        "-i", inputName,
+        "-af", filter,
+        "-ar", "44100",
+        "-ac", "2",
+        outName
+      );
 
-          ffmpeg.FS(
-            'writeFile',
-            'input.wav',
-            base64ToUint8(data.inputBase64)
-          );
+      const outBytes = ffmpeg.FS("readFile", outName);
+      const outB64 = uint8ArrayToBase64(outBytes);
 
-          await ffmpeg.run(
-            '-i',
-            'input.wav',
-            '-af',
-            'loudnorm',
-            'output.wav'
-          );
+      // cleanup
+      try { ffmpeg.FS("unlink", inputName); } catch {}
+      try { ffmpeg.FS("unlink", outName); } catch {}
 
-          const outBytes = ffmpeg.FS('readFile', 'output.wav');
-          const outBase64 = uint8ToBase64(outBytes);
+      const payload = {
+        type: "RESULT",
+        id,
+        mime: "audio/wav",
+        outBase64: outB64,
+        outName
+      };
 
-          statusEl.innerText = 'Done';
-
-          send({
-            type: 'RESULT',
-            outBase64,
-            mime: 'audio/wav',
-          });
-        } catch (e) {
-          statusEl.innerText = 'ERROR';
-          send({
-            type: 'ERROR',
-            message: String(e),
-          });
-        }
-      }
+      // send back to Expo WebView
+      window.parent.postMessage(JSON.stringify(payload), "*");
+      setStatus(`done ${id}`);
+      log(`✔ processed size=${outBytes.length}`);
     });
+
+    setStatus("waiting for PROCESS");
   </script>
+
 </body>
 </html>
