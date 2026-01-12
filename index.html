@@ -16,20 +16,32 @@
 
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
+    const state = urlParams.get("state"); // ★追加
 
     log("code = " + code);
+    log("state = " + state);
 
-    // デバッグ用：2秒後にリダイレクト
     setTimeout(() => {
-      if (code == null) {
+      if (!code) {
         log("→ fallback にリダイレクトします");
-        window.location.replace("https://zeclo.github.io/expo-notion/fallback.html");
-      } else {
-        log("→ expo app にリダイレクトします");
         window.location.replace(
-          "exp://gtxw8ua-zetta-san-8081.exp.direct/--/notionCallback?code=" + code
+          "https://zeclo.github.io/expo-notion/fallback.html"
         );
+        return;
       }
+
+      if (state === "zk") {
+        log("→ ZK Callback にリダイレクトします");
+        window.location.replace(
+          "exp://gtxw8ua-zetta-san-8081.exp.direct/--/notionZKCallback?code=" + code
+        );
+        return;
+      }
+
+      log("→ 既存 Notion Callback にリダイレクトします");
+      window.location.replace(
+        "exp://gtxw8ua-zetta-san-8081.exp.direct/--/notionCallback?code=" + code
+      );
     }, 2000);
   </script>
 </body>
