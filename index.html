@@ -3,46 +3,107 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Redirect Debug</title>
+  <title>Notion OAuth Redirect Debug</title>
+  <style>
+    body {
+      font-family: monospace;
+      background: #111;
+      color: #eee;
+      padding: 16px;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
 </head>
 <body>
-  <div id="log">Loading...</div>
+  <pre id="log">Loading...</pre>
 
   <script>
+    const logEl = document.getElementById("log");
     const log = (msg) => {
-      document.getElementById("log").innerText += "\n" + msg;
+      logEl.textContent += "\n" + msg;
       console.log(msg);
     };
 
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get("code");
-    const state = urlParams.get("state"); // ★追加
+    // --- URL params ---
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const state = params.get("state");
 
-    log("code = " + code);
+    log("code  = " + code);
     log("state = " + state);
 
+    // --- state parse ---
+    // state format: {authType}:{env}
+    // example: zk:eas_prod
+    let authType = null;
+    let env = null;
+
+    if (state && state.includes(":")) {
+      [authType, env] = state.split(":");
+    }
+
+    log("authType = " + authType);
+    log("env      = " + env);
+
+    // --- mappings ---
+
+    // 認証系統 → callback path
+    const authPathMap = {
+      zk: "notionZKCallback",
+      normal: "notionCallback",
+    };
+
+    // 実行環境 → URL scheme
+    const schemeMap = {
+      expo_go: "exp://gtxw8ua-zetta-san-8081.exp.direct/--",
+      eas_dev: "myapp-dev://",
+      eas_preview: "myapp-preview://",
+      eas_adhoc: "myapp-adhoc://",
+      eas_prod: "myapp://",
+    };
+
+    const FALLBACK_URL =
+      "https://zeclo.github.io/expo-notion/fallback.html";
+
+    // --- redirect logic ---
     setTimeout(() => {
       if (!code) {
-        log("→ fallback にリダイレクトします");
-        window.location.replace(
-          "https://zeclo.github.io/expo-notion/fallback.html"
-        );
+        log("→ code がありません。fallback にリダイレクト");
+        window.location.replace(FALLBACK_URL);
         return;
       }
 
-      if (state === "zk") {
-        log("→ ZK Callback にリダイレクトします");
-        window.location.replace(
-          "exp://gtxw8ua-zetta-san-8081.exp.direct/--/notionZKCallback?code=" + code
-        );
+      if (!authType || !env) {
+        log("→ state 形式不正。fallback にリダイレクト");
+        window.location.replace(FALLBACK_URL);
         return;
       }
 
-      log("→ 既存 Notion Callback にリダイレクトします");
-      window.location.replace(
-        "exp://gtxw8ua-zetta-san-8081.exp.direct/--/notionCallback?code=" + code
-      );
-    }, 2000);
+      const callbackPath = authPathMap[authType];
+      if (!callbackPath) {
+        log("→ 未知の authType。fallback");
+        window.location.replace(FALLBACK_URL);
+        return;
+      }
+
+      const baseScheme = schemeMap[env];
+      if (!baseScheme) {
+        log("→ 未知の env。fallback");
+        window.location.replace(FALLBACK_URL);
+        return;
+      }
+
+      const redirectUrl =
+        `${baseScheme}/${callbackPath}?code=${encodeURIComponent(code)}`;
+
+      log("→ redirect to:");
+      log(redirectUrl);
+
+      window.location.replace(redirectUrl);
+    }, 1500);
   </script>
 </body>
 </html>
