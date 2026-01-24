@@ -147,6 +147,8 @@
           filter: `session_id=eq.${sessionId}`,
         },
         (payload) => {
+          console.log("Realtime fired:", payload);
+          console.log("NEW:", payload.new);
           const path = payload.new.path;
           const { data } = sb.storage
             .from(BUCKET_NAME)
