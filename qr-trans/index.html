@@ -20,7 +20,6 @@
       text-align: center;
     }
 
-    /* ===== PCレイアウト ===== */
     .pc-layout {
       display: flex;
       justify-content: center;
@@ -39,33 +38,30 @@
       justify-content: center;
     }
 
-    /* ===== 受信画像（クリックDL対応） ===== */
+    /* ===== 受信画像 ===== */
     #result {
-      width: 307px;               /* QR 256px × 1.2 */
-      height: auto;
-      border: 1px solid #000;     /* 細い黒枠 */
+      width: 307px;               /* QR 256 × 1.2 */
+      border: 1px solid #000;
       padding: 4px;
       box-sizing: border-box;
       display: none;
 
-      cursor: pointer;            /* クリック可能 */
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      cursor: pointer;
+      transition: transform .15s ease, box-shadow .15s ease;
     }
 
     #result:hover {
-      transform: scale(1.02);     /* 軽い拡大 */
-      box-shadow: 0 0 6px rgba(0,0,0,0.3);
+      transform: scale(1.02);
+      box-shadow: 0 0 6px rgba(0,0,0,.3);
     }
 
-    /* ===== スマホ側 ===== */
+    /* ===== Mobile ===== */
     #mobile-view {
       text-align: center;
     }
 
     #preview {
       width: 80vw;
-      max-width: 80vw;
-      height: auto;
       margin: 16px auto;
       display: none;
     }
@@ -83,9 +79,9 @@
       <div id="qr"></div>
     </div>
 
-    <div class="image-area">
+    <div>
       <h3>受信した画像（クリックでDL）</h3>
-      <img id="result" alt="受信画像" />
+      <img id="result" />
     </div>
   </div>
 </div>
@@ -94,25 +90,21 @@
 <div id="mobile-view" style="display:none;">
   <p>画像を選択してください</p>
   <input type="file" accept="image/*" id="fileInput" />
-  <img id="preview" alt="選択画像プレビュー" />
+  <img id="preview" />
   <p id="status"></p>
 </div>
 
 <script>
-  // ===== 設定 =====
   const SUPABASE_URL = "https://pgakgqgtzalkkhqwmyzi.supabase.co";
-  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBnYWtncWd0emFsa2tocXdteXppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MDg5ODUsImV4cCI6MjA3OTM4NDk4NX0.d4vGQfHotXFW4JzDnZYIW5ztIBm-WzgfvF022FoAAek"; // ←実キーに置換
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBnYWtncWd0emFsa2tocXdteXppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MDg5ODUsImV4cCI6MjA3OTM4NDk4NX0.d4vGQfHotXFW4JzDnZYIW5ztIBm-WzgfvF022FoAAek"; // ←実キー
   const BUCKET_NAME = "qr-images";
 
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-  const isMobile = () =>
-    /iPhone|Android.+Mobile/.test(navigator.userAgent);
-
+  const isMobile = () => /iPhone|Android.+Mobile/.test(navigator.userAgent);
   const params = new URLSearchParams(location.search);
   let sessionId = params.get("session");
 
-  /* ===== PC側 ===== */
+  /* ===== PC ===== */
   async function initPC() {
     document.getElementById("pc-view").style.display = "block";
 
@@ -131,19 +123,24 @@
     const imagePath = `${sessionId}.jpg`;
     const resultImg = document.getElementById("result");
 
-    /* クリックでダウンロード */
-    resultImg.addEventListener("click", () => {
+    /* ▼ クリックで確実にDL */
+    resultImg.addEventListener("click", async () => {
       if (!resultImg.src) return;
 
+      const res = await fetch(resultImg.src);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
       const a = document.createElement("a");
-      a.href = resultImg.src;
+      a.href = url;
       a.download = `${sessionId}.jpg`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+
+      URL.revokeObjectURL(url);
     });
 
-    // Realtimeでアップロード検知
     sb.channel("qr_uploads")
       .on(
         "postgres_changes",
@@ -165,13 +162,13 @@
       .subscribe();
   }
 
-  /* ===== スマホ側 ===== */
+  /* ===== Mobile ===== */
   function initMobile() {
     document.getElementById("mobile-view").style.display = "block";
 
     const input = document.getElementById("fileInput");
-    const status = document.getElementById("status");
     const preview = document.getElementById("preview");
+    const status = document.getElementById("status");
 
     if (!sessionId) {
       status.textContent = "QRを再読み取りしてください";
@@ -179,38 +176,23 @@
     }
 
     input.addEventListener("change", async () => {
-      const file = input.files?.[0];
+      const file = input.files[0];
       if (!file) return;
 
       preview.src = URL.createObjectURL(file);
       preview.style.display = "block";
-
       status.textContent = "アップロード中…";
 
-      const { error: upErr } = await sb.storage
+      await sb.storage
         .from(BUCKET_NAME)
         .upload(`${sessionId}.jpg`, file, { upsert: true });
 
-      if (upErr) {
-        status.textContent = "アップロード失敗: " + upErr.message;
-        return;
-      }
-
-      const { error: insErr } = await sb.from("qr_uploads").insert({
-        session_id: sessionId,
-      });
-
-      if (insErr) {
-        status.textContent = "DB登録失敗: " + insErr.message;
-        return;
-      }
+      await sb.from("qr_uploads").insert({ session_id: sessionId });
 
       status.textContent = "送信完了 👍";
-      input.value = "";
     });
   }
 
-  // ===== 起動 =====
   isMobile() ? initMobile() : initPC();
 </script>
 
