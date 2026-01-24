@@ -69,10 +69,11 @@
       await sb.from("qr_sessions").insert({ id: sessionId });
 
       const url = `${location.origin}${location.pathname}?session=${sessionId}`;
-      QRCode.toCanvas(
-        document.getElementById("qr"),
-        url
-      );
+      new QRCode(document.getElementById("qr"), {
+  text: url,
+  width: 256,
+  height: 256,
+});
     }
 
     const imagePath = `${sessionId}.jpg`;
