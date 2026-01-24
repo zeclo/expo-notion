@@ -115,11 +115,17 @@
 
       status.textContent = "アップロード中…";
 
-      await sb.storage
-        .from(BUCKET_NAME)
-        .upload(`${sessionId}.jpg`, file, {
-          upsert: true,
-        });
+      const { data, error } = await sb.storage
+  .from(BUCKET_NAME)
+  .upload(`${sessionId}.jpg`, file, { upsert: true });
+
+if (error) {
+  console.error("UPLOAD ERROR:", error);
+  status.textContent = "アップロード失敗: " + error.message;
+  return;
+}
+
+console.log("UPLOAD OK:", data);
 
       await sb.from("qr_uploads").insert({
         session_id: sessionId,
