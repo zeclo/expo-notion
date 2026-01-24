@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>QR Image Transfer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Supabase JS -->
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <!-- QRCode generator -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
+    img {
+      max-width: 90%;
+      margin-top: 20px;
+    }
+    #qr {
+      margin: 20px auto;
+    }
+  </style>
+</head>
+<body>
+
+<h1>QR Image Transfer</h1>
+
+<div id="pc-view" style="display:none;">
+  <p>スマホでこのQRコードを読み取ってください</p>
+  <canvas id="qr"></canvas>
+  <h3>受信した画像</h3>
+  <img id="result" />
+</div>
+
+<div id="mobile-view" style="display:none;">
+  <p>画像を選択してください</p>
+  <input type="file" accept="image/*" id="fileInput" />
+  <p id="status"></p>
+</div>
+
+<script>
+  // ====== 設定 ======
+  const SUPABASE_URL = "https://YOUR_PROJECT_ID.supabase.co";
+  const SUPABASE_ANON_KEY = "YOUR_ANON_KEY";
+  const BUCKET_NAME = "qr-images";
+
+  const supabase = supabaseJs.createClient(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY
+  );
+
+  // ====== ユーティリティ ======
+  const isMobile = () =>
+    /iPhone|Android.+Mobile/.test(navigator.userAgent);
+
+  const params = new URLSearchParams(location.search);
+  let sessionId = params.get("session");
+
+  // ====== PC側 ======
+  async function initPC() {
+    document.getElementById("pc-view").style.display = "block";
+
+    if (!sessionId) {
+      sessionId = crypto.randomUUID();
+      await supabase.from("qr_sessions").insert({ id: sessionId });
+
+      const url = `${location.origin}${location.pathname}?session=${sessionId}`;
+      QRCode.toCanvas(
+        document.getElementById("qr"),
+        url
+      );
+    }
+
+    const imagePath = `${sessionId}.jpg`;
+
+    // Realtime でアップロード検知
+    supabase
+      .channel("qr_uploads")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "qr_uploads",
+          filter: `session_id=eq.${sessionId}`,
+        },
+        () => {
+          const { data } = supabase
+            .storage
+            .from(BUCKET_NAME)
+            .getPublicUrl(imagePath);
+
+          document.getElementById("result").src =
+            data.publicUrl + `?t=${Date.now()}`;
+        }
+      )
+      .subscribe();
+  }
+
+  // ====== スマホ側 ======
+  function initMobile() {
+    document.getElementById("mobile-view").style.display = "block";
+
+    const input = document.getElementById("fileInput");
+    const status = document.getElementById("status");
+
+    input.addEventListener("change", async () => {
+      const file = input.files[0];
+      if (!file || !sessionId) return;
+
+      status.textContent = "アップロード中…";
+
+      await supabase.storage
+        .from(BUCKET_NAME)
+        .upload(`${sessionId}.jpg`, file, {
+          upsert: true,
+        });
+
+      await supabase.from("qr_uploads").insert({
+        session_id: sessionId,
+      });
+
+      status.textContent = "送信完了 👍";
+    });
+  }
+
+  // ====== 起動 ======
+  if (isMobile()) {
+    initMobile();
+  } else {
+    initPC();
+  }
+</script>
+
+</body>
+</html>
