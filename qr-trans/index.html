@@ -39,14 +39,22 @@
       justify-content: center;
     }
 
-    /* ===== 受信画像 ===== */
+    /* ===== 受信画像（クリックDL対応） ===== */
     #result {
-      width: 307px;               /* 256px × 1.2 */
+      width: 307px;               /* QR 256px × 1.2 */
       height: auto;
       border: 1px solid #000;     /* 細い黒枠 */
       padding: 4px;
       box-sizing: border-box;
       display: none;
+
+      cursor: pointer;            /* クリック可能 */
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    #result:hover {
+      transform: scale(1.02);     /* 軽い拡大 */
+      box-shadow: 0 0 6px rgba(0,0,0,0.3);
     }
 
     /* ===== スマホ側 ===== */
@@ -76,7 +84,7 @@
     </div>
 
     <div class="image-area">
-      <h3>受信した画像</h3>
+      <h3>受信した画像（クリックでDL）</h3>
       <img id="result" alt="受信画像" />
     </div>
   </div>
@@ -122,6 +130,18 @@
 
     const imagePath = `${sessionId}.jpg`;
     const resultImg = document.getElementById("result");
+
+    /* クリックでダウンロード */
+    resultImg.addEventListener("click", () => {
+      if (!resultImg.src) return;
+
+      const a = document.createElement("a");
+      a.href = resultImg.src;
+      a.download = `${sessionId}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
 
     // Realtimeでアップロード検知
     sb.channel("qr_uploads")
