@@ -48,10 +48,10 @@
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBnYWtncWd0emFsa2tocXdteXppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MDg5ODUsImV4cCI6MjA3OTM4NDk4NX0.d4vGQfHotXFW4JzDnZYIW5ztIBm-WzgfvF022FoAAek";
   const BUCKET_NAME = "qr-images";
 
-  const supabase = supabaseJs.createClient(
-    SUPABASE_URL,
-    SUPABASE_ANON_KEY
-  );
+  const sb = supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY
+);
 
   // ====== ユーティリティ ======
   const isMobile = () =>
@@ -66,7 +66,7 @@
 
     if (!sessionId) {
       sessionId = crypto.randomUUID();
-      await supabase.from("qr_sessions").insert({ id: sessionId });
+      await sb.from("qr_sessions").insert({ id: sessionId });
 
       const url = `${location.origin}${location.pathname}?session=${sessionId}`;
       QRCode.toCanvas(
@@ -78,7 +78,7 @@
     const imagePath = `${sessionId}.jpg`;
 
     // Realtime でアップロード検知
-    supabase
+    sb
       .channel("qr_uploads")
       .on(
         "postgres_changes",
@@ -89,7 +89,7 @@
           filter: `session_id=eq.${sessionId}`,
         },
         () => {
-          const { data } = supabase
+          const { data } = sb
             .storage
             .from(BUCKET_NAME)
             .getPublicUrl(imagePath);
@@ -114,13 +114,13 @@
 
       status.textContent = "アップロード中…";
 
-      await supabase.storage
+      await sb.storage
         .from(BUCKET_NAME)
         .upload(`${sessionId}.jpg`, file, {
           upsert: true,
         });
 
-      await supabase.from("qr_uploads").insert({
+      await sb.from("qr_uploads").insert({
         session_id: sessionId,
       });
 
