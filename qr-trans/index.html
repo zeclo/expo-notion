@@ -5,72 +5,36 @@
   <title>QR Image Transfer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- Supabase -->
+  <!-- Supabase JS -->
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-  <!-- QRCode -->
+  <!-- QRCode generator -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
   <style>
     body {
       font-family: system-ui, sans-serif;
+      text-align: center;
       padding: 20px;
     }
 
-    h1 {
-      text-align: center;
-    }
-
-    /* ===== PC Layout ===== */
-    .pc-layout {
-      display: flex;
-      gap: 32px;
-      align-items: flex-start;
-      justify-content: center;
-      margin-top: 24px;
-    }
-
-    .qr-area {
-      text-align: center;
-    }
-
-    .result-area {
-      flex: 1;
-      max-width: 600px;
-    }
-
-    /* ===== QR ===== */
-    #qr {
-      margin-top: 16px;
-      display: flex;
-      justify-content: center;
-    }
-
-    /* ===== PC Image Item ===== */
-    .result-item {
-      border: 1px solid #000;
-      padding: 6px;
-      margin-bottom: 16px;
-    }
-
-    .result-item img {
-      width: 100%;
+    /* ===== PC側：受信画像（QRの2倍 = 512pxまで） ===== */
+    #result {
       max-width: 512px;
-      display: block;
+      width: 100%;
+      height: auto;
+      margin-top: 20px;
     }
 
-    .result-item a {
-      display: inline-block;
-      margin-top: 6px;
-      font-size: 14px;
+    /* ===== QRコード中央表示 ===== */
+    #qr {
+      margin: 20px auto;
+      display: flex;
+      justify-content: center;
     }
 
-    /* ===== Mobile ===== */
-    #mobile-view {
-      text-align: center;
-    }
-
+    /* ===== スマホ側：選択画像プレビュー ===== */
     #preview {
-      width: 80vw;
+      width: 80vw;      /* 画面幅の80% */
       max-width: 80vw;
       height: auto;
       margin: 16px auto;
@@ -82,44 +46,41 @@
 
 <h1>QR Image Transfer</h1>
 
-<!-- ===== PC ===== -->
+<!-- ===== PC VIEW ===== -->
 <div id="pc-view" style="display:none;">
-  <div class="pc-layout">
-    <div class="qr-area">
-      <p>スマホでこのQRコードを読み取ってください</p>
-      <div id="qr"></div>
-    </div>
-
-    <div class="result-area">
-      <h3>受信した画像</h3>
-      <div id="image-list"></div>
-    </div>
-  </div>
+  <p>スマホでこのQRコードを読み取ってください</p>
+  <div id="qr"></div>
+  <h3>受信した画像</h3>
+  <img id="result" />
 </div>
 
-<!-- ===== Mobile ===== -->
+<!-- ===== MOBILE VIEW ===== -->
 <div id="mobile-view" style="display:none;">
-  <p>画像を選択してください（複数可）</p>
-  <input type="file" accept="image/*" id="fileInput" multiple />
+  <p>画像を選択してください</p>
+  <input type="file" accept="image/*" id="fileInput" />
   <img id="preview" />
   <p id="status"></p>
 </div>
 
 <script>
-  // ===== 設定 =====
+  // ====== 設定 ======
   const SUPABASE_URL = "https://pgakgqgtzalkkhqwmyzi.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBnYWtncWd0emFsa2tocXdteXppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4MDg5ODUsImV4cCI6MjA3OTM4NDk4NX0.d4vGQfHotXFW4JzDnZYIW5ztIBm-WzgfvF022FoAAek";
   const BUCKET_NAME = "qr-images";
 
-  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const sb = supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY
+  );
 
+  // ====== ユーティリティ ======
   const isMobile = () =>
     /iPhone|Android.+Mobile/.test(navigator.userAgent);
 
   const params = new URLSearchParams(location.search);
   let sessionId = params.get("session");
 
-  /* ===== PC ===== */
+  // ====== PC側 ======
   async function initPC() {
     document.getElementById("pc-view").style.display = "block";
 
@@ -135,8 +96,9 @@
       });
     }
 
-    const imageList = document.getElementById("image-list");
+    const imagePath = `${sessionId}.jpg`;
 
+    // Realtime でアップロード検知
     sb.channel("qr_uploads")
       .on(
         "postgres_changes",
@@ -146,34 +108,19 @@
           table: "qr_uploads",
           filter: `session_id=eq.${sessionId}`,
         },
-        (payload) => {
-          console.log("Realtime fired:", payload);
-          console.log("NEW:", payload.new);
-          const path = payload.new.path;
+        () => {
           const { data } = sb.storage
             .from(BUCKET_NAME)
-            .getPublicUrl(path);
+            .getPublicUrl(imagePath);
 
-          const item = document.createElement("div");
-          item.className = "result-item";
-
-          const img = document.createElement("img");
-          img.src = data.publicUrl + `?t=${Date.now()}`;
-
-          const dl = document.createElement("a");
-          dl.href = data.publicUrl;
-          dl.download = path.split("/").pop();
-          dl.textContent = "ダウンロード";
-
-          item.appendChild(img);
-          item.appendChild(dl);
-          imageList.prepend(item);
+          document.getElementById("result").src =
+            data.publicUrl + `?t=${Date.now()}`;
         }
       )
       .subscribe();
   }
 
-  /* ===== Mobile ===== */
+  // ====== スマホ側 ======
   function initMobile() {
     document.getElementById("mobile-view").style.display = "block";
 
@@ -182,44 +129,44 @@
     const preview = document.getElementById("preview");
 
     if (!sessionId) {
-      status.textContent = "QRを再読み取りしてください";
+      status.textContent = "セッションが無効です。QRを再読み取りしてください。";
       return;
     }
 
     input.addEventListener("change", async () => {
-      const files = Array.from(input.files);
-      if (!files.length) return;
+      const file = input.files[0];
+      if (!file) return;
 
-      preview.src = URL.createObjectURL(files[0]);
+      // ▼ プレビュー表示（画面幅80%）
+      preview.src = URL.createObjectURL(file);
       preview.style.display = "block";
 
       status.textContent = "アップロード中…";
 
-      for (const file of files) {
-        const path = `${sessionId}/${crypto.randomUUID()}.jpg`;
+      const { data, error } = await sb.storage
+        .from(BUCKET_NAME)
+        .upload(`${sessionId}.jpg`, file, { upsert: true });
 
-        const { error } = await sb.storage
-          .from(BUCKET_NAME)
-          .upload(path, file);
-
-        if (error) {
-          status.textContent = "アップロード失敗";
-          return;
-        }
-
-        await sb.from("qr_uploads").insert({
-          session_id: sessionId,
-          path,
-        });
+      if (error) {
+        console.error("UPLOAD ERROR:", error);
+        status.textContent = "アップロード失敗: " + error.message;
+        return;
       }
 
+      await sb.from("qr_uploads").insert({
+        session_id: sessionId,
+      });
+
       status.textContent = "送信完了 👍";
-      input.value = "";
     });
   }
 
-  // ===== 起動 =====
-  isMobile() ? initMobile() : initPC();
+  // ====== 起動 ======
+  if (isMobile()) {
+    initMobile();
+  } else {
+    initPC();
+  }
 </script>
 
 </body>
