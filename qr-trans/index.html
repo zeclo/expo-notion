@@ -68,7 +68,7 @@
       sessionId = crypto.randomUUID();
       await sb.from("qr_sessions").insert({ id: sessionId });
 
-      const url = `${location.origin}${location.pathname}?session=${sessionId}`;
+      const url = `${location.href.split('?')[0]}?session=${sessionId}`;
       new QRCode(document.getElementById("qr"), {
   text: url,
   width: 256,
